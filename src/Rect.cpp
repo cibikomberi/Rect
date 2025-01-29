@@ -1,18 +1,24 @@
 #include "Rect.h"
 
 Rect::Rect() {
-  apiKey = API_KEY;
-  deviceVersion = RECT_DEVICE_ID;
-  deviceId = RECT_DEVICE_VERSION;
+
 }
 
-void Rect::begin(Client &client) {
+void Rect::begin(Client &client, String apiKey, String deviceId, String deviceVersion) {
+    this->apiKey = apiKey;
+    this->deviceId = deviceId;
+    this->deviceVersion = deviceVersion;
+
     internetClient = &client;
     mqttClient.begin("rect.local", 1883, client);
     mqttClient.onMessage([this](String &topic, String &payload) {
         this->mqttCallback(topic, payload);
     });
     connectMqtt();
+}
+
+void Rect::loop() {
+    mqttClient.loop();
 }
 
 void Rect::registerCallback(const std::string& key, std::function<void(float)> callback) {
@@ -23,7 +29,7 @@ void Rect::registerCallback(const std::string& key, std::function<void(std::stri
     stringHandlers[key] = callback;
 }
 
-void Rect::registerCommandProcessor(std::function<std::string(std::string)> callback) {
+void Rect::registerCommandProcessor(std::function<std::string(String)> callback) {
     commandProcessorCallback = callback;
 }
 
@@ -35,13 +41,17 @@ void Rect::put(String id, String val) {
     mqttClient.publish(("rect/" + String(deviceId) + "/data").c_str(), "{\"" + id + "\":" + val + "}", false, 1);
 }
 
+void Rect::log(String val) {
+    mqttClient.publish(("rect/" + String(deviceId) + "/log").c_str(),  val, false, 1);
+}
+
 void Rect::connectMqtt() {
     int i = 3;        
     while (!mqttClient.connected() && i > 0) {
         mqttClient.setWill(("rect/" + String(deviceId) + "/status").c_str(), "{\"status\":\"offline\"}", true, 1);
         if (mqttClient.connect(deviceId.c_str())) {
             mqttClient.subscribe("rect/device/" + String(deviceId) + "/data");
-            mqttClient.subscribe("rect/device/" + String(deviceId) + "/ota");
+            mqttClient.subscribe("rect/" + String(deviceId) + "/ota");
             mqttClient.subscribe("rect/device/" + String(deviceId) + "/command");
         }
         mqttClient.publish(("rect/" + String(deviceId) + "/status").c_str(), "{\"status\":\"online\"}", true, 1);
@@ -50,17 +60,24 @@ void Rect::connectMqtt() {
 }
 
 void Rect::mqttCallback(String &topic, String &payload) {
+    Serial.println("Received message: " + topic + " - " + payload);
     if (topic.equals("rect/device/" + String(deviceId) + "/data")) {
         parseData(payload);
     } else if (topic.equals("rect/" + String(deviceId) + "/ota")) {
         checkUpdates(payload);
     } else if (topic.equals("rect/device/" + String(deviceId) + "/command")) {
-        // Command handling logic here
+        if (commandProcessorCallback) {
+          std::string res = commandProcessorCallback(payload.c_str());
+          if (res.length() > 0) {
+            mqttClient.publish(("rect/" + String(deviceId) + "/log").c_str(), res.c_str(), false, 1);
+          }
+        }
+        
     }
 }
 
 void Rect::parseData(String payload) {
-    StaticJsonDocument<512> json;
+    JsonDocument json;
     DeserializationError error = deserializeJson(json, payload);
 
     if (error) {
@@ -77,6 +94,7 @@ void Rect::parseData(String payload) {
 }
 
 void Rect::checkUpdates(String targetVersion) {
+    Serial.println("Checking for updates");
   if (targetVersion == deviceVersion){
     return;
   }
