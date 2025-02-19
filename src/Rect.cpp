@@ -18,7 +18,27 @@ void Rect::begin(Client &client, String apiKey, String deviceId, String deviceVe
 }
 
 void Rect::loop() {
+    connectMqtt();
     mqttClient.loop();
+}
+
+void Rect::sync() {
+    std::ostringstream oss;
+    bool first = true; // To avoid adding an extra comma at the start
+
+    for (const auto& pair : floatHandlers) {
+        if (!first) oss << ", ";  // Add comma before every element except the first
+        oss << pair.first;
+        first = false;
+    }
+    for (const auto& pair : stringHandlers) {
+        if (!first) oss << ", ";  
+        oss << pair.first;
+        first = false;
+    }
+    if (first) return;
+    
+    mqttClient.publish(("rect/" + String(deviceId) + "/sync").c_str(), oss.str().c_str(), false, 1);
 }
 
 void Rect::registerCallback(const std::string& key, std::function<void(float)> callback) {
@@ -48,19 +68,24 @@ void Rect::log(String val) {
 void Rect::connectMqtt() {
     int i = 3;        
     while (!mqttClient.connected() && i > 0) {
-        mqttClient.setWill(("rect/" + String(deviceId) + "/status").c_str(), "{\"status\":\"offline\"}", true, 1);
+        Serial.print("attempt");
+        mqttClient.setWill(("rect/" + String(deviceId) + "/status").c_str(), "{\"status\":\"Offline\"}", true, 1);
         if (mqttClient.connect(deviceId.c_str())) {
             mqttClient.subscribe("rect/device/" + String(deviceId) + "/data");
             mqttClient.subscribe("rect/" + String(deviceId) + "/ota");
             mqttClient.subscribe("rect/device/" + String(deviceId) + "/command");
+            sync();
         }
-        mqttClient.publish(("rect/" + String(deviceId) + "/status").c_str(), "{\"status\":\"online\"}", true, 1);
+        mqttClient.publish(("rect/" + String(deviceId) + "/status").c_str(), "{\"status\":\"Online\"}", true, 1);
         i--;
     }
 }
 
 void Rect::mqttCallback(String &topic, String &payload) {
-    Serial.println("Received message: " + topic + " - " + payload);
+    Serial.print("Received message: ");
+    Serial.print( topic);
+    Serial.print( " - ");
+    Serial.println(payload);
     if (topic.equals("rect/device/" + String(deviceId) + "/data")) {
         parseData(payload);
     } else if (topic.equals("rect/" + String(deviceId) + "/ota")) {
@@ -72,7 +97,6 @@ void Rect::mqttCallback(String &topic, String &payload) {
             mqttClient.publish(("rect/" + String(deviceId) + "/log").c_str(), res.c_str(), false, 1);
           }
         }
-        
     }
 }
 
@@ -84,9 +108,15 @@ void Rect::parseData(String payload) {
         return;
     }
 
-    if (json["data"].is<float>()) {
+    if (json["data"].is<float>() || json["data"].is<int>()) {
         if (floatHandlers.find(json["id"].as<std::string>()) != floatHandlers.end()) {
             floatHandlers[json["id"]](json["data"].as<float>());
+        } else {
+            mqttClient.publish(("rect/" + String(deviceId) + "/log").c_str(), "{\"type\": \"error\", No callback registered for " + json["id"].as<String>() + "}", false, 1);
+        }
+    } else {
+        if (stringHandlers.find(json["id"].as<std::string>()) != stringHandlers.end()) {
+            stringHandlers[json["id"]](json["data"].as<std::string>());
         } else {
             mqttClient.publish(("rect/" + String(deviceId) + "/log").c_str(), "{\"type\": \"error\", No callback registered for " + json["id"].as<String>() + "}", false, 1);
         }
@@ -95,12 +125,88 @@ void Rect::parseData(String payload) {
 
 void Rect::checkUpdates(String targetVersion) {
     Serial.println("Checking for updates");
-  if (targetVersion == deviceVersion){
+  if (targetVersion.equals(deviceVersion)) {
     return;
   }
   String url = "/thing/update/" + String(deviceId) + "?version=" + String(deviceVersion);
   performOTA(*internetClient, "rect.local", url.c_str(), 8080);
 }
+
+// void Rect::performOTA(Client& client, const char* host, const char* path, int port) {
+//     if (!client.connect(host, port)) {
+//         Serial.println("Connection failed");
+//         return;
+//     }
+
+//     Serial.println("Connected to OTA server");
+
+//     // Send HTTP GET request
+//     client.printf("GET %s HTTP/1.1\r\n", path);
+//     client.printf("Host: %s\r\n", host);
+//     client.println("User-Agent: Rect-OTA\r\nConnection: close\r\n");
+
+//     // Wait for response
+//     while (client.connected() && !client.available()) {
+//         delay(10);
+//     }
+
+//     // Read HTTP headers
+//     String line;
+//     int contentLength = -1;
+//     bool isHeader = true;
+//     while (client.available()) {
+//         line = client.readStringUntil('\n');
+//         if (isHeader) {
+//             if (line.startsWith("HTTP/1.1 200")) {
+//                 Serial.println("OTA update available");
+//             } else if (line.startsWith("Content-Length: ")) {
+//                 contentLength = line.substring(16).toInt();
+//                 Serial.print("Firmware size: ");
+//                 Serial.println(contentLength);
+//             } else if (line == "\r") {
+//                 isHeader = false; // End of headers
+//             }
+//         } else {
+//             break; // Exit header parsing
+//         }
+//     }
+
+//     if (contentLength <= 0) {
+//         Serial.println("Invalid content length");
+//         client.stop();
+//         return;
+//     }
+
+//     // Start OTA update
+//     if (!Update.begin(contentLength)) {
+//         Serial.println("Update.begin() failed");
+//         client.stop();
+//         return;
+//     }
+
+//     // Write firmware to flash
+//     int written = Update.writeStream(client);
+//     if (written != contentLength) {
+//         Serial.println("Update failed, written bytes mismatch");
+//         client.stop();
+//         return;
+//     }
+
+//     if (!Update.end()) {
+//         Serial.println("Update.end() failed");
+//         client.stop();
+//         return;
+//     }
+
+//     if (Update.isFinished()) {
+//         Serial.println("Update successful, rebooting...");
+//         ESP.restart();
+//     } else {
+//         Serial.println("Update not finished");
+//     }
+
+//     client.stop();
+// }
 
 void Rect::performOTA(Client& client, const char* host, const char* path, int port) {
     if (!client.connect(host, port)) {
@@ -143,4 +249,5 @@ void Rect::performOTA(Client& client, const char* host, const char* path, int po
         ESP.restart();
     }
     client.stop();
-}
+    connectMqtt();
+} 

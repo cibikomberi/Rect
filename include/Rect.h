@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <functional>
 #include <unordered_map>
+#include <sstream>
 #include <Client.h>
 #include <MQTT.h>
 #include <ArduinoJson.h>
@@ -15,6 +16,7 @@ public:
     Rect();
     void begin(Client &client, String apiKey, String deviceId, String deviceVersion);
     void loop();
+    void sync();
     void registerCallback(const std::string& key, std::function<void(float)> callback);
     void registerCallback(const std::string& key, std::function<void(std::string)> callback);
     void registerCommandProcessor(std::function<std::string(String)> callback);
