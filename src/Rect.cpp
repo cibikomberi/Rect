@@ -132,82 +132,6 @@ void Rect::checkUpdates(String targetVersion) {
   performOTA(*internetClient, "rect.local", url.c_str(), 8080);
 }
 
-// void Rect::performOTA(Client& client, const char* host, const char* path, int port) {
-//     if (!client.connect(host, port)) {
-//         Serial.println("Connection failed");
-//         return;
-//     }
-
-//     Serial.println("Connected to OTA server");
-
-//     // Send HTTP GET request
-//     client.printf("GET %s HTTP/1.1\r\n", path);
-//     client.printf("Host: %s\r\n", host);
-//     client.println("User-Agent: Rect-OTA\r\nConnection: close\r\n");
-
-//     // Wait for response
-//     while (client.connected() && !client.available()) {
-//         delay(10);
-//     }
-
-//     // Read HTTP headers
-//     String line;
-//     int contentLength = -1;
-//     bool isHeader = true;
-//     while (client.available()) {
-//         line = client.readStringUntil('\n');
-//         if (isHeader) {
-//             if (line.startsWith("HTTP/1.1 200")) {
-//                 Serial.println("OTA update available");
-//             } else if (line.startsWith("Content-Length: ")) {
-//                 contentLength = line.substring(16).toInt();
-//                 Serial.print("Firmware size: ");
-//                 Serial.println(contentLength);
-//             } else if (line == "\r") {
-//                 isHeader = false; // End of headers
-//             }
-//         } else {
-//             break; // Exit header parsing
-//         }
-//     }
-
-//     if (contentLength <= 0) {
-//         Serial.println("Invalid content length");
-//         client.stop();
-//         return;
-//     }
-
-//     // Start OTA update
-//     if (!Update.begin(contentLength)) {
-//         Serial.println("Update.begin() failed");
-//         client.stop();
-//         return;
-//     }
-
-//     // Write firmware to flash
-//     int written = Update.writeStream(client);
-//     if (written != contentLength) {
-//         Serial.println("Update failed, written bytes mismatch");
-//         client.stop();
-//         return;
-//     }
-
-//     if (!Update.end()) {
-//         Serial.println("Update.end() failed");
-//         client.stop();
-//         return;
-//     }
-
-//     if (Update.isFinished()) {
-//         Serial.println("Update successful, rebooting...");
-//         ESP.restart();
-//     } else {
-//         Serial.println("Update not finished");
-//     }
-
-//     client.stop();
-// }
-
 void Rect::performOTA(Client& client, const char* host, const char* path, int port) {
     if (!client.connect(host, port)) {
         return;
@@ -227,7 +151,12 @@ void Rect::performOTA(Client& client, const char* host, const char* path, int po
         return;
     }
 
-    int contentLength = -1;
+    #ifdef ESP32
+        int contentLength = -1;
+    #elif defined(ESP8266)
+        size_t contentLength = -1;
+    #endif
+    
     while (line != "\r") {
         line = client.readStringUntil('\n');
         if (line.startsWith("Content-Length: ")) {
@@ -251,3 +180,4 @@ void Rect::performOTA(Client& client, const char* host, const char* path, int po
     client.stop();
     connectMqtt();
 } 
+
